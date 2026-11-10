@@ -1,0 +1,15 @@
+# For running from a checkout (development, or building locally).
+# For CasaOS, use casaos/docker-compose.yml instead.
+services:
+  heathgets:
+    build: .
+    image: ghcr.io/davekrupinski/heathgets:latest
+    container_name: heathgets
+    restart: unless-stopped
+    init: true
+    user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      TZ: America/New_York
+      HEATHGETS_RUN_HOURS: ${HEATHGETS_RUN_HOURS:-6,12}
+    volumes:
+      - ${HEATHGETS_DATA:-./tmp-data}:/data

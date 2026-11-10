@@ -1,0 +1,32 @@
+# CasaOS: App Store -> Custom Install -> Import, paste this file.
+# Before installing, change the left side of the volume to your Synology folder,
+# and PUID/PGID under `user:` if your share needs a different owner.
+name: heathgets
+services:
+  heathgets:
+    image: ghcr.io/davekrupinski/heathgets:latest
+    container_name: heathgets
+    restart: unless-stopped
+    init: true
+    user: "1000:1000"
+    environment:
+      TZ: America/New_York
+      HEATHGETS_RUN_HOURS: "6,12"
+    volumes:
+      - type: bind
+        source: /media/CHANGE-ME/comics
+        target: /data
+x-casaos:
+  main: heathgets
+  author: davekrupinski
+  developer: davekrupinski
+  category: Utilities
+  title:
+    en_us: Heathgets
+  tagline:
+    en_us: Daily Heathcliff strip archiver
+  description:
+    en_us: Saves each day's Heathcliff strip to the NAS (dated archive plus latest.jpg).
+  architectures:
+    - amd64
+    - arm64

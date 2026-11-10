@@ -1,0 +1,76 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+$LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
+$stdout.sync = true
+
+require "heathgets"
+
+USAGE = <<~TXT
+  Usage: heathgets <command>
+
+    init                    mark the data root (run once, against the mounted share)
+    run [DAYS]              fetch any missing strips from the last DAYS days (default 7)
+    fetch FROM[..TO]        backfill a date or range, e.g. 2026-10-01..2026-11-08
+    daemon                  run now, then at each HEATHGETS_RUN_HOURS (default 6,12)
+
+  Env: HEATHGETS_DATA (default /data), HEATHGETS_RUN_HOURS, TZ
+TXT
+
+def store = Heathgets::Store.new(ENV.fetch("HEATHGETS_DATA", "/data"))
+def runner = Heathgets::Runner.new(store: store)
+def log = Heathgets.logger
+
+def run_hours
+  hours = ENV.fetch("HEATHGETS_RUN_HOURS", "6,12").split(",").map { Integer(_1.strip) }.sort.uniq
+  raise ArgumentError, "HEATHGETS_RUN_HOURS must be hours 0-23" if hours.empty? || hours.any? { !(0..23).cover?(_1) }
+  hours
+end
+
+def next_run_after(now, hours)
+  today = now.to_date
+  candidates = [today, today + 1].flat_map do |d|
+    hours.map { |h| Time.new(d.year, d.month, d.day, h, 0, 0) }
+  end
+  candidates.find { _1 > now }
+end
+
+def safely
+  yield
+rescue Heathgets::Error, SystemCallError, IOError, Timeout::Error, SocketError, OpenSSL::SSL::SSLError => e
+  log.error("#{e.class}: #{e.message}")
+  false
+end
+
+cmd, *args = ARGV
+case cmd
+when "init"
+  store.init!
+  log.info("initialized #{store.root}")
+when "run"
+  days = Integer(args.first || 7)
+  exit(safely { runner.catch_up(days: days) } ? 0 : 1)
+when "fetch"
+  spec = args.first or abort(USAGE)
+  from_s, to_s = spec.split("..", 2)
+  from = Date.iso8601(from_s)
+  to = to_s ? Date.iso8601(to_s) : from
+  abort "FROM must not be after TO" if from > to
+  exit(safely { runner.backfill(from: from, to: to) } ? 0 : 1)
+when "daemon"
+  hours = run_hours
+  log.info("heathgets #{Heathgets::VERSION} daemon starting; runs at #{hours.map { format('%02d:00', _1) }.join(', ')} #{Time.now.zone}")
+  %w[TERM INT].each { |sig| trap(sig) { exit } }
+  retry_after = Integer(ENV.fetch("HEATHGETS_RETRY_MINUTES", "15")) * 60
+  loop do
+    ok = safely { runner.catch_up }
+    nxt = next_run_after(Time.now, hours)
+    # After a failure (NAS not mounted yet, network blip), try again soon.
+    nxt = [nxt, Time.now + retry_after].min unless ok
+    log.info("next run at #{nxt.strftime('%F %T %Z')}")
+    sleep [nxt - Time.now, 1].max
+  end
+else
+  puts USAGE
+  exit(cmd.nil? || %w[-h --help help].include?(cmd) ? 0 : 1)
+end
